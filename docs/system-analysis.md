@@ -120,7 +120,7 @@ The system contains **14 entities**:
 | `Employee_ID` | Unique employee identifier | **PK** |
 | `First_Name` | Employee's first name | NOT NULL |
 | `Last_Name` | Employee's last name | NOT NULL |
-| `Phone` | Contact phone number | NOT NULL |
+| `Phone` | Contact phone number | NOT NULL, **UNIQUE** |
 | `Salary` | Employee salary | NOT NULL, positive value |
 | `Hire_Date` | Hiring date | NOT NULL, valid date |
 | `Status` | Employment status | NOT NULL, controlled domain |
@@ -182,7 +182,7 @@ The system contains **14 entities**:
 | `Appointment_Date` | Date of appointment | NOT NULL, valid date |
 | `Appointment_Type` | Type of appointment | NOT NULL, controlled domain (e.g., Scheduled, Walk-in, Follow-up) |
 | `Status` | Appointment status (e.g., Scheduled/Completed/Cancelled/No-show) | NOT NULL, controlled domain |
-| `Reason` | Reason for the visit | NOT NULL |
+| `Reason_for_Visit` | Reason for the visit | NOT NULL |
 
 **Business Rules**
 - Every appointment belongs to exactly one patient and references exactly one doctor.
@@ -201,15 +201,17 @@ The system contains **14 entities**:
 
 | Attribute | Description | Rule |
 |---|---|---|
-| `Medical_Records_ID` | Associated appointment | **PK, FK** → `Appointments.Appointment_ID` |
+| `Record_No` | Unique identifier for the medical record | **PK**, Auto-increment |
+| `Appointment_ID` | Associated appointment | **FK** → `Appointments.Appointment_ID`, **UNIQUE**, NOT NULL |
 | `Diagnosis` | Diagnosis recorded | NOT NULL |
-| `Notes` | Additional notes | Optional |
+| `Clinical_Notes` | Additional notes | Optional |
 | `Record_Date` | Date the record was created | NOT NULL, valid date |
 
 **Business Rules**
-- An appointment may have zero or one medical record.
-- Each medical record belongs to exactly one appoinment.
-- No direct `Patient_ID` is stored — the patient is reached via `Medical_Records → Appointments → Patients`, avoiding a redundant relationship.
+- An appointment may have zero or one medical record (`0..1`).
+- Each medical record belongs to exactly one appointment (`1..1`).
+- The `Appointment_ID` is defined as **UNIQUE** to strictly enforce that no appointment can have more than one medical record.
+- No direct `Patient_ID` is stored — the patient is reached via `Medical_Records → Appointments → Patients`, avoiding redundant relationships and maintaining 3NF database normalization.
 
 ---
 
@@ -217,10 +219,10 @@ The system contains **14 entities**:
 
 | Attribute | Description | Rule |
 |---|---|---|
-| `Prescription_ID` | Unique prescription identifier | **PK** |
+| `Prescription_No` | Unique prescription identifier | **PK**, Auto-increment |
 | `Appointment_ID` | Associated appointment | NOT NULL, **FK** → `Appointments.Appointment_ID` |
 | `Prescription_Date` | Date issued | NOT NULL, valid date |
-| `Instructions` | General instructions | Optional |
+| `General_Instructions` | General instructions | Optional |
 
 **Business Rules**
 - An appointment may have zero, one, or many prescriptions.
@@ -247,13 +249,13 @@ The system contains **14 entities**:
 
 | Attribute | Description | Rule |
 |---|---|---|
-| `Prescription_ID` | Identifies the prescription | **PK, FK** → `Prescriptions.Prescription_ID` |
+| `Prescription_No` | Identifies the prescription | **PK, FK** → `Prescriptions.Prescription_No` |
 | `Medicine_ID` | Identifies the medicine | **PK, FK** → `Medicines.Medicine_ID` |
 | `Dosage` | Dose prescribed | NOT NULL |
 | `Frequency` | How often taken | NOT NULL |
-| `Duration` | Treatment duration | NOT NULL |
+| `Duration_Days` | Treatment duration | NOT NULL |
 
-**Composite PK:** `(Prescription_ID, Medicine_ID)`
+**Composite PK:** `(Prescription_No, Medicine_ID)`
 
 **Business Rules**
 - Resolves `Prescriptions M:N Medicines`.
@@ -279,15 +281,18 @@ The system contains **14 entities**:
 
 | Attribute | Description | Rule |
 |---|---|---|
-| `Invoice_ID` | Associated appointment & unique invoice identifier | **PK, FK** → `Appointments.Appointment_ID` |
-| `Invoice_Date` | Date issued | NOT NULL, valid date |
+| `Invoice_No` | Unique identifier for the invoice | **PK**, Auto-increment |
+| `Appointment_ID` | Associated appointment | **FK** → `Appointments.Appointment_ID`, **UNIQUE**, NOT NULL |
+| `Issue_Date` | Date issued | NOT NULL, valid date |
 | `Payment_Status` | Administrative status (Unpaid/Paid/Cancelled) | NOT NULL, controlled domain |
 | `Total_Amount` | Total services cost | Derived and can't be manipulated manually |
 
 **Business Rules**
-- An appointment may have zero or one invoice.
-- `Total_Amount` is **derived**, not stored: `SUM(Line_Total)` from `Invoice_Services` (may later be exposed via a database View in the implementation phase).
-- No direct `Patient_ID` — reached via `Invoices → Appointments → Patients`.
+- An appointment may have zero or one invoice (`0..1`).
+- Each invoice belongs to exactly one appointment (`1..1`).
+- The `Appointment_ID` is defined as **UNIQUE** to strictly enforce that no appointment can have more than one invoice.
+- `Total_Amount` is **derived**, not stored: `SUM(Line_Total)` from `Invoice_Services` (exposed via a database View in the implementation phase).
+- No direct `Patient_ID` is stored — the patient is reached via `Invoices → Appointments → Patients`, avoiding redundant relationships and maintaining database normalization.
 
 ---
 
@@ -295,13 +300,13 @@ The system contains **14 entities**:
 
 | Attribute | Description | Rule |
 |---|---|---|
-| `Invoice_ID` | Identifies the invoice | **PK, FK** → `Invoices.Invoice_ID` |
+| `Invoice_No` | Identifies the invoice | **PK, FK** → `Invoices.Invoice_No` |
 | `Service_ID` | Identifies the service | **PK, FK** → `Services.Service_ID` |
 | `Quantity` | Units of service | NOT NULL, positive value |
 | `Unit_Price` | Actual price charged at invoice time | NOT NULL, positive value |
 | `Line_Total` | Total cost of the service | Derived and can't be manipulated manually | 
 
-**Composite PK:** `(Invoice_ID, Service_ID)`
+**Composite PK:** `(Invoice_No, Service_ID)`
 
 **Business Rules**
 - Resolves `Invoices M:N Services`.
@@ -314,15 +319,16 @@ The system contains **14 entities**:
 
 | Attribute | Description | Rule |
 |---|---|---|
-| `Payment_ID` | Unique payment identifier | **PK** |
-| `Invoice_ID` | Invoice receiving the payment | NOT NULL ,**FK** → `Invoices.Invoice_ID` |
-| `Amount_Paid` | Amount paid | NOT NULL, positive value |
+| `Payment_No` | Unique identifier for the payment | **PK**, Auto-increment |
+| `Invoice_No` | Invoice receiving the payment | **FK** → `Invoices.Invoice_No`, NOT NULL |
+| `Amount_Paid` | Amount paid in this transaction | NOT NULL, positive value |
 | `Payment_Date` | Date of payment | NOT NULL, valid date |
-| `Payment_Method` | Method used | NOT NULL, controlled domain |
+| `Payment_Method` | Method used (e.g., Cash, Credit Card) | NOT NULL, controlled domain |
 
 **Business Rules**
-- An invoice may have zero, one, or many payments (supports partial/full/multiple payments).
-- The cumulative `Amount_Paid` for an invoice must not exceed its derived total.
+- An invoice may have zero, one, or many payments (`0..*`), supporting partial, full, or installment payments.
+- Each payment record belongs to strictly one invoice (`1..1`).
+- The cumulative sum of `Amount_Paid` for a single `Invoice_No` must not exceed the invoice's derived `Total_Amount`.
 
 ---
 
@@ -368,7 +374,7 @@ The system contains **14 entities**:
 Attributes describing a *relationship instance* (not the parent entities) are stored on the associative/event entity itself:
 
 - `Appointments` → `Appointment_Date`, `Type`, `Status`, `Reason`
-- `Prescription_Medicines` → `Dosage`, `Frequency`, `Duration`
+- `Prescription_Medicines` → `Dosage`, `Frequency`, `Duration_Days`
 - `Invoice_Services` → `Quantity`, `Unit_Price`
 
 This prevents relationship-specific values from being mistakenly stored as permanent attributes of `Patients`, `Doctors`, `Medicines`, or `Services`.
@@ -430,14 +436,14 @@ This prevents relationship-specific values from being mistakenly stored as perma
 | `Roles` | `Role_ID` | — |
 | `Patients` | `Patient_ID` | — |
 | `Appointments` | `Appointment_ID` | `Patient_ID` → `Patients`; `Doctor_ID` → `Doctor.Employee_ID` |
-| `Medical_Records` | `Medical_Records_ID` | `Medical_Records_ID` → `Appointments` |
-| `Prescriptions` | `Prescription_ID` | `Appointment_ID` → `Appointments` |
+| `Medical_Records` | `Record_No` | `Appointment_ID` → `Appointments` |
+| `Prescriptions` | `Prescription_No` | `Appointment_ID` → `Appointments` |
 | `Medicines` | `Medicine_ID` | — |
-| `Prescription_Medicines` | `(Prescription_ID, Medicine_ID)` | both → `Prescriptions`, `Medicines` |
+| `Prescription_Medicines` | `(Prescription_No, Medicine_ID)` | both → `Prescriptions`, `Medicines` |
 | `Services` | `Service_ID` | — |
-| `Invoices` | `Invoice_ID` | `Invoice_ID` → `Appointments` |
-| `Invoice_Services` | `(Invoice_ID, Service_ID)` | both → `Invoices`, `Services` |
-| `Payments` | `Payment_ID` | `Invoice_ID` → `Invoices` |
+| `Invoices` | `Invoice_No` | `Appointment_ID` → `Appointments` |
+| `Invoice_Services` | `(Invoice_No, Service_ID)` | both → `Invoices`, `Services` |
+| `Payments` | `Payment_No` | `Invoice_No` → `Invoices` |
 
 > **Doctor reference integrity**: `Appointments.Doctor_ID` must target `Doctor.Employee_ID`, never `Employees.Employee_ID` directly — this guarantees an appointment always references an employee who is actually a doctor.
 
@@ -445,7 +451,7 @@ This prevents relationship-specific values from being mistakenly stored as perma
 
 - `Doctor.License_Number`
 - All primary keys are inherently unique.
-- `Role_Name`, `Service_Name`, phone numbers.
+- `Role_Name`, `Service_Name`.
 
 ### 8.3 CHECK / Domain Constraints (examples to implement in SQL phase)
 
