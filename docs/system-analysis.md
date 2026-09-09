@@ -47,9 +47,9 @@ This analysis defines the system's scope, entities, attributes, keys, relationsh
 | Area | Summary |
 |---|---|
 | Patient Management | Identity, demographic, contact, and account-status data. A patient may exist without an appointment and may have zero, one, or many appointments over time. |
-| Employee Management | Common employee data stored once via a supertype/subtype structure: `Employees` → `Doctor` / `General_Employee`. |
-| Doctor Management | Doctors are specialized employees with specialization and license number. Appointments reference the `Doctor` subtype directly. |
-| General Employee Management | Non-doctor employees, each linked to exactly one `Role`. |
+| Employee Management | Common employee data stored once via a supertype/subtype structure: `Employees` → `Doctors` / `General_Employees`. |
+| Doctors Management | Doctors are specialized employees with specialization and license number. Appointments reference the `Doctors` subtype directly. |
+| General Employee Management | Non-doctors employees, each linked to exactly one `Role`. |
 | Appointment Management | Actual interactions between patients and doctors; resolves the conceptual M:N relationship between them. |
 | Medical Record Management | Clinical data resulting from an appointment (zero or one record per appointment). |
 | Prescription Management | Issued during appointments; may include multiple medicines with prescription-specific dosage/frequency/duration. |
@@ -60,7 +60,7 @@ This analysis defines the system's scope, entities, attributes, keys, relationsh
 
 ### 2.2 Out of Scope
 
-- Doctor schedule / availability management
+- Doctors schedule / availability management
 - Pharmacy inventory, drug purchasing, and stock replenishment
 - Pharmacy sales
 - Structured allergy or chronic-disease management
@@ -75,8 +75,8 @@ The system contains **14 entities**:
 | # | Entity | Classification |
 |---|---|---|
 | 1 | `Employees` | Supertype |
-| 2 | `Doctor` | Subtype |
-| 3 | `General_Employee` | Subtype |
+| 2 | `Doctors` | Subtype |
+| 3 | `General_Employees` | Subtype |
 | 4 | `Roles` | Reference Entity |
 | 5 | `Patients` | Main Entity |
 | 6 | `Appointments` | Main Business Event / Associative Entity |
@@ -128,12 +128,12 @@ The system contains **14 entities**:
 **Business Rules**
 - Common employee data is stored once here to avoid duplication across subtypes.
 - Every employee belongs to **exactly one** current subtype (Total specialization).
-- An employee cannot be both a `Doctor` and a `General_Employee` (Disjoint specialization).
+- An employee cannot be both a `Doctors` and a `General_Employees` (Disjoint specialization).
 - Inactive employees are retained when historical relationships must be preserved.
 
 ---
 
-### 4.3 Doctor (Subtype of `Employees`)
+### 4.3 Doctors (Subtype of `Employees`)
 
 | Attribute | Description | Rule |
 |---|---|---|
@@ -144,12 +144,12 @@ The system contains **14 entities**:
 **Business Rules**
 - Every doctor must correspond to an existing employee record.
 - License number must be unique per doctor.
-- Appointments must reference the `Doctor` subtype — not `Employees` directly.
+- Appointments must reference the `Doctors` subtype — not `Employees` directly.
 - New appointments must only be assigned to active doctors.
 
 ---
 
-### 4.4 General_Employee (Subtype of `Employees`)
+### 4.4 General_Employees (Subtype of `Employees`)
 
 | Attribute | Description | Rule |
 |---|---|---|
@@ -157,7 +157,7 @@ The system contains **14 entities**:
 | `Role_ID` | Employee's role | NOT NULL, **FK** → `Roles.Role_ID` |
 
 **Business Rules**
-- Represents current non-doctor employees; no further subtypes are defined in this scope.
+- Represents current non-doctors employees; no further subtypes are defined in this scope.
 - Each general employee has exactly one role; one role may be assigned to many employees.
 
 ---
@@ -178,7 +178,7 @@ The system contains **14 entities**:
 |---|---|---|
 | `Appointment_ID` | Unique appointment identifier | **PK** |
 | `Patient_ID` | Associated patient | NOT NULL, **FK** → `Patients.Patient_ID` |
-| `Doctor_ID` | Associated doctor | NOT NULL, **FK** → `Doctor.Employee_ID` |
+| `Doctor_ID` | Associated doctor | NOT NULL, **FK** → `Doctors.Employee_ID` |
 | `Appointment_Date` | Date of appointment | NOT NULL, valid date |
 | `Appointment_Type` | Type of appointment | NOT NULL, controlled domain (e.g., Scheduled, Walk-in, Follow-up) |
 | `Status` | Appointment status (e.g., Scheduled/Completed/Cancelled/No-show) | NOT NULL, controlled domain |
@@ -188,6 +188,8 @@ The system contains **14 entities**:
 - Every appointment belongs to exactly one patient and references exactly one doctor.
 - A patient/doctor may have zero, one, or many appointments.
 - `Appointments` is a **business event**, not a plain linking table — it carries its own attributes and therefore resolves the conceptual `Patients M:N Doctors` relationship.
+- Cancelled appointments (`Status = 'Cancelled'`) must not have associated `Medical_Records`, `Prescriptions`, or `Invoices`.
+- No-show appointments (`Status = 'No-show'`) may only generate invoices if the clinic charges a penalty/cancellation fee, but cannot generate `Medical_Records` or `Prescriptions`.
 
 > **Note:**
 **`Appointment_Type` = (Booking Source):**
@@ -239,9 +241,11 @@ The system contains **14 entities**:
 | `Medicine_Name` | Name of the medicine | NOT NULL |
 | `Dosage_Form` | Form (tablet, syrup, etc.) | NOT NULL |
 | `Strength` | Standard strength | NOT NULL |
+| `Status` | Availability status (Active/Inactive) | NOT NULL, controlled domain |
 
 **Business Rules**
 - Stores standardized reference data only — **not** pharmacy inventory (no stock/quantity attributes).
+- Inactive medicines (Status = 'Inactive') are retained to preserve historical prescriptions, but cannot be selected for new prescriptions.
 
 ---
 
@@ -270,11 +274,13 @@ The system contains **14 entities**:
 | `Service_ID` | Unique service identifier | **PK** |
 | `Service_Name` | Name of the service | NOT NULL, **UNIQUE** |
 | `Description` | Service description | Optional |
-| `Price` | Current/standard price | NOT NULL, positive value |
+| `Price` | Current/standard price | NOT NULL, non-negative value (`>= 0`) |
+| `Status` | Availability status (Active/Inactive) | NOT NULL, controlled domain |
 
 **Business Rules**
-- `Services.Price` is the *current* price — it never overwrites historical prices already invoiced.
-
+- `Services.Price` is the *current* price — it never overwrites historical prices already invoiced. Supports free services/follow-ups (`Price = 0`).
+- Inactive services (Status = 'Inactive') are retained to preserve historical invoice records, but cannot be added to new invoices.
+  
 ---
 
 ### 4.12 Invoices
@@ -303,7 +309,7 @@ The system contains **14 entities**:
 | `Invoice_No` | Identifies the invoice | **PK, FK** → `Invoices.Invoice_No` |
 | `Service_ID` | Identifies the service | **PK, FK** → `Services.Service_ID` |
 | `Quantity` | Units of service | NOT NULL, positive value |
-| `Unit_Price` | Actual price charged at invoice time | NOT NULL, positive value |
+| `Unit_Price` | Actual price charged at invoice time | NOT NULL, non-negative value (`>= 0`) |
 | `Line_Total` | Total cost of the service | Derived and can't be manipulated manually | 
 
 **Composite PK:** `(Invoice_No, Service_ID)`
@@ -321,14 +327,18 @@ The system contains **14 entities**:
 |---|---|---|
 | `Payment_No` | Unique identifier for the payment | **PK**, Auto-increment |
 | `Invoice_No` | Invoice receiving the payment | **FK** → `Invoices.Invoice_No`, NOT NULL |
+| `Created_By_Employee_ID` |Employee who recorded and processed the payment | **FK** → `General_Employees.Employee_ID`, NOT NULL |
 | `Amount_Paid` | Amount paid in this transaction | NOT NULL, positive value |
 | `Payment_Date` | Date of payment | NOT NULL, valid date |
 | `Payment_Method` | Method used (e.g., Cash, Credit Card) | NOT NULL, controlled domain |
 
+
 **Business Rules**
 - An invoice may have zero, one, or many payments (`0..*`), supporting partial, full, or installment payments.
 - Each payment record belongs to strictly one invoice (`1..1`).
+- Every payment must reference the appropriate non-doctor employee (`Created_By_Employee_ID`) who processed the financial transaction for accountability and audit trail purposes.
 - The cumulative sum of `Amount_Paid` for a single `Invoice_No` must not exceed the invoice's derived `Total_Amount`.
+- `Payment_Date` must be on or after the associated invoice's `Issue_Date` (`Payment_Date >= Invoices.Issue_Date`).
 
 ---
 
@@ -340,13 +350,13 @@ The system contains **14 entities**:
                Total + Disjoint Specialization
                     /              \
                    v                v
-               Doctor        General_Employee
+               Doctors        General_Employees
                                     |
                                     v
                                   Roles
 ```
 
-- **Total**: every employee must belong to a current subtype (`Doctor` or `General_Employee`).
+- **Total**: every employee must belong to a current subtype (`Doctors` or `General_Employees`).
 - **Disjoint**: no employee can belong to both subtypes simultaneously.
 - **Shared Primary Key**: both subtypes use `Employee_ID` as PK and FK back to `Employees`.
 
@@ -356,11 +366,11 @@ The system contains **14 entities**:
 
 | # | Relationship | Cardinality | Notes |
 |---|---|---|---|
-| 1 | `Employees – Doctor` | 1 : 0..1 | Total + Disjoint specialization |
-| 2 | `Employees – General_Employee` | 1 : 0..1 | Total + Disjoint specialization |
-| 3 | `Roles – General_Employee` | 1 : M | One role → many general employees |
+| 1 | `Employees – Doctors` | 1 : 0..1 | Total + Disjoint specialization |
+| 2 | `Employees – General_Employees` | 1 : 0..1 | Total + Disjoint specialization |
+| 3 | `Roles – General_Employees` | 1 : M | One role → many general employees |
 | 4 | `Patients – Appointments` | 1 : 0..M | A patient may have many appointments |
-| 5 | `Doctor – Appointments` | 1 : 0..M | A doctor may have many appointments |
+| 5 | `Doctors – Appointments` | 1 : 0..M | A doctor may have many appointments |
 | 6 | `Patients – Doctors` | **M : N** | Resolved via `Appointments` (associative + business event) |
 | 7 | `Appointments – Medical_Records` | 1 : 0..1 | Optional, one record max per appointment |
 | 8 | `Appointments – Prescriptions` | 1 : 0..M | An appointment may yield many prescriptions |
@@ -368,6 +378,7 @@ The system contains **14 entities**:
 | 10 | `Appointments – Invoices` | 1 : 0..1 | Supports appointments not yet billed |
 | 11 | `Invoices – Services` | **M : N** | Resolved via `Invoice_Services` |
 | 12 | `Invoices – Payments` | 1 : 0..M | Supports full, partial, and multiple payments |
+| 13 | `Employees – Payments` | 1 : 0..M | An employee processes zero or more financial payments (Audit trail) |
 
 ### Transaction-Specific Attribute Principle
 
@@ -390,37 +401,40 @@ This prevents relationship-specific values from being mistakenly stored as perma
 3. Patient data is never duplicated in `Appointments`.
 4. Inactive patients are retained, not physically deleted.
 
-**Employees / Doctor / General_Employee**
+**Employees / Doctors / General_Employees**
 
-5. `Employee_ID` is unique per employee.
-6. Every employee belongs to exactly one current subtype (Total + Disjoint).
-7. A doctor's `License_Number` is unique; new appointments only reference active doctors.
-8. Every general employee has exactly one role.
+1. `Employee_ID` is unique per employee.
+2. Every employee belongs to exactly one current subtype (Total + Disjoint).
+3. A Doctor's `License_Number` is unique; new appointments only reference active doctors.
+4. Every general employee has exactly one role.
 
 **Appointments**
 
-9. Every appointment has exactly one patient and one doctor.
-10. Appointment date, type, status, and reason are mandatory.
-11. Status supports Completed, Cancelled, and No-show.
+1. Every appointment has exactly one patient and one doctor.
+2. Appointment date, type, status, and reason are mandatory.
+3. Status supports Scheduled, Completed, Cancelled, and No-show. Cancelled appointments cannot receive medical records, prescriptions, or invoices.
 
 **Medical Records & Prescriptions**
 
-12. An appointment has at most one medical record.
-13. An appointment may have multiple prescriptions; each prescription may cover multiple medicines.
-14. Dosage/Frequency/Duration are recorded per prescription-medicine pair, not on `Medicines` itself.
+1. An appointment has at most one medical record.
+2. An appointment may have multiple prescriptions; each prescription may cover multiple medicines.
+3. Dosage/Frequency/Duration are recorded per prescription-medicine pair, not on `Medicines` itself.
 
 **Medicines / Services**
 
-15. `Medicines` is a reference catalog only — no inventory tracking.
-16. `Services.Price` is the current price; it never overwrites historical invoice prices.
+1. `Medicines` is a reference catalog only — no inventory tracking.
+2. `Services.Price` is the current price; it never overwrites historical invoice prices.
+3. Inactive services or medicines (Status = 'Inactive') are soft-deleted and cannot be selected for new transactions, preserving historical clinical and billing records.
 
 **Invoices & Payments**
 
-17. An appointment has at most one invoice.
-18. `Total_Amount` and `Line_Total` are derived values, never stored redundantly.
-19. `Unit_Price` on `Invoice_Services` preserves the price actually charged.
-20. Cumulative payments on an invoice must not exceed its derived total.
-21. `Payment_Status` is a stored administrative state, distinct from the calculated `SUM(Amount_Paid)`.
+1. An appointment has at most one invoice.
+2. `Total_Amount` and `Line_Total` are derived values, never stored redundantly.
+3. `Unit_Price` on `Invoice_Services` preserves the price actually charged.
+4. Cumulative payments on an invoice must not exceed its derived total.
+5. `Payment_Status` is a stored administrative state, distinct from the calculated `SUM(Amount_Paid)`.
+6. Payment date must be greater than or equal to the invoice issue date (`Payment_Date >= Issue_Date`).
+7. Every payment transaction must be audited by linking to the employee who recorded it (Created_By_Employee_ID).
 
 ---
 
@@ -431,11 +445,11 @@ This prevents relationship-specific values from being mistakenly stored as perma
 | Entity | Primary Key | Foreign Key(s) |
 |---|---|---|
 | `Employees` | `Employee_ID` | — |
-| `Doctor` | `Employee_ID` | → `Employees.Employee_ID` |
-| `General_Employee` | `Employee_ID` | → `Employees.Employee_ID`; `Role_ID` → `Roles.Role_ID` |
+| `Doctors` | `Employee_ID` | → `Employees.Employee_ID` |
+| `General_Employees` | `Employee_ID` | → `Employees.Employee_ID`; `Role_ID` → `Roles.Role_ID` |
 | `Roles` | `Role_ID` | — |
 | `Patients` | `Patient_ID` | — |
-| `Appointments` | `Appointment_ID` | `Patient_ID` → `Patients`; `Doctor_ID` → `Doctor.Employee_ID` |
+| `Appointments` | `Appointment_ID` | `Patient_ID` → `Patients`; `Doctor_ID` → `Doctors.Employee_ID` |
 | `Medical_Records` | `Record_No` | `Appointment_ID` → `Appointments` |
 | `Prescriptions` | `Prescription_No` | `Appointment_ID` → `Appointments` |
 | `Medicines` | `Medicine_ID` | — |
@@ -443,25 +457,24 @@ This prevents relationship-specific values from being mistakenly stored as perma
 | `Services` | `Service_ID` | — |
 | `Invoices` | `Invoice_No` | `Appointment_ID` → `Appointments` |
 | `Invoice_Services` | `(Invoice_No, Service_ID)` | both → `Invoices`, `Services` |
-| `Payments` | `Payment_No` | `Invoice_No` → `Invoices` |
+| `Payments` | `Payment_No` | `Invoice_No` → `Invoices`, `Created_By_Employee_ID` → `General_Employees.Employee_ID`|
 
-> **Doctor reference integrity**: `Appointments.Doctor_ID` must target `Doctor.Employee_ID`, never `Employees.Employee_ID` directly — this guarantees an appointment always references an employee who is actually a doctor.
+> **Doctors reference integrity**: `Appointments.Doctor_ID` must target `Doctors.Employee_ID`, never `Employees.Employee_ID` directly — this guarantees an appointment always references an employee who is actually a doctor.
 
 ### 8.2 UNIQUE Constraints
 
-- `Doctor.License_Number`
+- `Doctors.License_Number`
 - All primary keys are inherently unique.
 - `Role_Name`, `Service_Name`.
 
 ### 8.3 CHECK / Domain Constraints (examples to implement in SQL phase)
 
 - `CHECK (Salary > 0)`
-- `CHECK (Services.Price > 0)`
-- `CHECK (Invoice_Services.Quantity > 0)` and `CHECK (Invoice_Services.Unit_Price > 0)`
+- `CHECK (Services.Price >= 0)` (allows free services/follow-up visits)
+- `CHECK (Invoice_Services.Quantity > 0)` and `CHECK (Invoice_Services.Unit_Price >= 0)`
 - `CHECK (Payments.Amount_Paid > 0)`
 - `CHECK` on controlled-domain columns such as `Appointments.Status`, `Appointments.Appointment_Type`, `Invoices.Payment_Status`, `Employees.Status`, `Patients.Status` (e.g., restricted to an allowed list of values).
-
-These satisfy the project's minimum requirement of at least one `CHECK` constraint, with several more available across the schema.
+- `CHECK (Payment_Date >= Issue_Date)` (ensures payment transactions occur on or after the invoice issuance date)
 
 ---
 
@@ -469,64 +482,25 @@ These satisfy the project's minimum requirement of at least one `CHECK` constrai
 
 | Decision | Rationale |
 |---|---|
-| `Employees` as supertype | Avoids duplicating common attributes across `Doctor` and `General_Employee`. |
-| Total + Disjoint specialization | Every employee is either a Doctor or a General Employee — never both, never neither. |
+| `Employees` as supertype | Avoids duplicating common attributes across `Doctors` and `General_Employees`. |
+| Total + Disjoint specialization | Every employee is either a Doctors or a General Employee — never both, never neither. |
 | `Appointments` as a business event (not a plain junction table) | It carries its own attributes (date, type, status, reason), so it meaningfully resolves `Patients M:N Doctors`. |
 | No direct `Patient_ID` in `Medical_Records` / `Invoices` | Both are reachable through `Appointments`, avoiding a redundant duplicate relationship. |
 | `Medicines` as reference-only | Pharmacy inventory is out of scope; keeps the catalog clean and focused. |
 | Two separate price concepts | `Services.Price` (current) vs. `Invoice_Services.Unit_Price` (historical, actually charged) — preserves financial history. |
 | Derived financial totals | `Line_Total` and `Total_Amount` are calculated, not stored, to avoid redundancy and update anomalies. |
-| Soft deletion via `Status` | `Employees.Status` / `Patients.Status` preserve historical relationships instead of physical deletion. |
+| Soft deletion via `Status` | `Employees.Status` / `Patients.Status` / `Services.Status` / `Medicines.Status` preserve historical relationships instead of physical deletion. |
+| Auditing payment creation via `Created_By_Employee_ID` | Ensures financial accountability by tracking which employee recorded each payment transaction. |
 
 ---
 
-## 10. Conceptual Structure (for ERD Phase)
-
-```text
-                         Employees
-                             |
-                    Total + Disjoint
-                       /          \
-                      v            v
-                  Doctor      General_Employee
-                                    |
-                                    v
-                                  Roles
-
-Patients                              Doctor
-    |                                    |
-    | 0..M                               | 0..M
-    +-----------> Appointments <----------+
-                         |
-              +----------+----------+
-              |          |          |
-              v          v          v
-       Medical_Records Prescriptions Invoices
-                          |            |
-                          v            +-------------------+
-                Prescription_Medicines                     |
-                          |                                 v
-                          v                          Invoice_Services --- Services
-                      Medicines                             |
-                                                              v
-                                            Invoices ----> Payments
-```
-
-**Three M:N relationships resolved by associative entities:**
-
-1. `Patients M:N Doctors` → `Appointments`
-2. `Prescriptions M:N Medicines` → `Prescription_Medicines`
-3. `Invoices M:N Services` → `Invoice_Services`
-
----
-
-## 11. Conclusion
+## 10. Conclusion
 
 The Clinic Management System is modeled around `Appointments` as the central business event linking `Patients` and `Doctors`, with two downstream branches:
 
 - **Clinical branch**: `Appointments → Medical_Records` and `Appointments → Prescriptions → Prescription_Medicines → Medicines`
 - **Financial branch**: `Appointments → Invoices → Invoice_Services → Services`, with `Invoices → Payments`
 
-The employee side uses a Total + Disjoint `Employees` supertype with `Doctor` and `General_Employee` subtypes. All redundant relationships are avoided by routing through `Appointments`, all M:N relationships are resolved with associative entities carrying their own meaningful attributes, and historical financial data is preserved by separating current prices from actually-charged prices.
+The employee side uses a Total + Disjoint `Employees` supertype with `Doctors` and `General_Employees` subtypes. All redundant relationships are avoided by routing through `Appointments`, all M:N relationships are resolved with associative entities carrying their own meaningful attributes, and historical financial data is preserved by separating current prices from actually-charged prices.
 
 This analysis (entities, attributes, keys, relationships, cardinalities, and business rules) is the finalized foundation for the next project phases: **ERD Design → Normalization (1NF/2NF/3NF) → Oracle SQL Implementation**.
