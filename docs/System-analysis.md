@@ -46,8 +46,8 @@ This analysis defines the system's scope, entities, attributes, keys, relationsh
 
 | Area | Summary |
 |---|---|
-| Patient Management | Identity, demographic, contact, and account-status data. A patient may exist without an appointment and may have zero, one, or many appointments over time. |
-| Employee Management | Common employee data stored once via a supertype/subtype structure: `Employees` → `Doctors` / `General_Employees`. |
+| Patient Management | Identity (Full_Name), demographic, contact (Address), and account-status data. A patient may exist without an appointment and may have zero, one, or many appointments over time. |
+| Employee Management | Common employee identity (Full_Name), contact (Address, Phone), and HR data stored once via a supertype/subtype structure: `Employees` → `Doctors` / `General_Employees`. |
 | Doctors Management | Doctors are specialized employees with specialization and license number. Appointments reference the `Doctors` subtype directly. |
 | General Employee Management | Non-doctors employees, each linked to exactly one `Role`. |
 | Appointment Management | Actual interactions between patients and doctors; resolves the conceptual M:N relationship between them. |
@@ -98,12 +98,15 @@ The system contains **14 entities**:
 | Attribute | Description | Rule |
 |---|---|---|
 | `Patient_ID` | Unique patient identifier | **PK** |
-| `First_Name` | Patient's first name | NOT NULL |
-| `Last_Name` | Patient's last name | NOT NULL |
+| `First_Name` | Component of composite attribute `Full_Name` | NOT NULL |
+| `Middle_Name` | Component of composite attribute `Full_Name` | NOT NULL |
+| `Last_Name` | Component of composite attribute `Full_Name` | NOT NULL |
 | `Date_of_Birth` | Date of birth | NOT NULL, valid date |
 | `Gender` | Patient's gender | NOT NULL, controlled domain |
 | `Phone` | Contact phone number | NOT NULL |
-| `Address` | Patient's address | NOT NULL |
+| `City` | Component of composite attribute `Address` | NOT NULL |
+| `Street` | Component of composite attribute `Address` | NOT NULL |
+| `Neighborhood` | Component of composite attribute `Address` | NOT NULL |
 | `Status` | Account status (e.g., Active/Inactive) | NOT NULL, controlled domain |
 
 **Business Rules**
@@ -118,9 +121,13 @@ The system contains **14 entities**:
 | Attribute | Description | Rule |
 |---|---|---|
 | `Employee_ID` | Unique employee identifier | **PK** |
-| `First_Name` | Employee's first name | NOT NULL |
-| `Last_Name` | Employee's last name | NOT NULL |
+| `First_Name` | Component of composite attribute `Full_Name` | NOT NULL |
+| `Middle_Name` | Component of composite attribute `Full_Name` | NOT NULL |
+| `Last_Name` | Component of composite attribute `Full_Name` | NOT NULL |
 | `Phone` | Contact phone number | NOT NULL, **UNIQUE** |
+| `City` | Component of composite attribute `Address` | NOT NULL |
+| `Street` | Component of composite attribute `Address` | NOT NULL |
+| `Neighborhood` | Component of composite attribute `Address` | NOT NULL |
 | `Salary` | Employee salary | NOT NULL, positive value |
 | `Hire_Date` | Hiring date | NOT NULL, valid date |
 | `Status` | Employment status | NOT NULL, controlled domain |
@@ -491,6 +498,7 @@ This prevents relationship-specific values from being mistakenly stored as perma
 | Derived financial totals | `Line_Total` and `Total_Amount` are calculated, not stored, to avoid redundancy and update anomalies. |
 | Soft deletion via `Status` | `Employees.Status` / `Patients.Status` / `Services.Status` / `Medicines.Status` preserve historical relationships instead of physical deletion. |
 | Auditing payment creation via `Created_By_Employee_ID` | Ensures financial accountability by tracking which employee recorded each payment transaction. |
+| Composite attributes decomposition | Attributes like `Full_Name` (First, Middle, Last) and `Address` (City, Street, Neighborhood) are defined conceptually as composite attributes to support First Normal Form (1NF) atomic field representation. |
 
 ---
 
@@ -501,6 +509,6 @@ The Clinic Management System is modeled around `Appointments` as the central bus
 - **Clinical branch**: `Appointments → Medical_Records` and `Appointments → Prescriptions → Prescription_Medicines → Medicines`
 - **Financial branch**: `Appointments → Invoices → Invoice_Services → Services`, with `Invoices → Payments`
 
-The employee side uses a Total + Disjoint `Employees` supertype with `Doctors` and `General_Employees` subtypes. All redundant relationships are avoided by routing through `Appointments`, all M:N relationships are resolved with associative entities carrying their own meaningful attributes, and historical financial data is preserved by separating current prices from actually-charged prices.
+The employee side uses a Total + Disjoint `Employees` supertype with `Doctors` and `General_Employees` subtypes. Both `Patients` and `Employees` entities capture structured composite details for names (`Full_Name`) and addresses (`Address`). All redundant relationships are avoided by routing through `Appointments`, all M:N relationships are resolved with associative entities carrying their own meaningful attributes, and historical financial data is preserved by separating current prices from actually-charged prices.
 
 This analysis (entities, attributes, keys, relationships, cardinalities, and business rules) is the finalized foundation for the next project phases: **ERD Design → Normalization (1NF/2NF/3NF) → Oracle SQL Implementation**.
