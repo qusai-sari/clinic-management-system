@@ -297,7 +297,7 @@ The system contains **14 entities**:
 | `Invoice_No` | Unique identifier for the invoice | **PK**, Auto-increment |
 | `Appointment_ID` | Associated appointment | **FK** → `Appointments.Appointment_ID`, **UNIQUE**, NOT NULL |
 | `Issue_Date` | Date issued | NOT NULL, valid date |
-| `Payment_Status` | Administrative status (Unpaid/Paid/Cancelled) | NOT NULL, controlled domain |
+| `Payment_Status` | Administrative status (Unpaid/Partially Paid/Paid) | NOT NULL, controlled domain |
 | `Total_Amount` | Total services cost | Derived and can't be manipulated manually |
 
 **Business Rules**
