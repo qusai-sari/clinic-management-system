@@ -10,14 +10,6 @@
 
 > **Design Basis:**  
 > This schema is derived from the Clinic Management System analysis and ERD. The design follows standard relational database principles, including entity integrity, referential integrity, normalization, supertype/subtype specialization, and associative relations for many-to-many relationships.
-- **Relation_Name**: Represents a relation (table).
-- <u>Underlined_Attribute</u>: Represents the **Primary Key (PK)**.
-- *Italicized_Attribute*: Represents a **Foreign Key (FK)**.
-- <u>*Underlined_and_Italicized*</u>: Represents an attribute that is both a **Primary Key and Foreign Key (PK, FK)**.
-- A composite primary key is represented by underlining each participating attribute.
-
-> **Design Basis:**  
-> This schema is derived from the Clinic Management System analysis and ERD. The design follows standard relational database principles, including entity integrity, referential integrity, normalization, supertype/subtype specialization, and associative relations for many-to-many relationships.
 
 ---
 
@@ -43,7 +35,7 @@
 
 **Services** (<u>Service_ID</u>, Service_Name, Description, Price, Status)
 
-**Invoices** (<u>Invoice_No</u>, *Appointment_ID*, Issue_Date, Payment_Status)
+**Invoices** (<u>Invoice_No</u>, *Appointment_ID*, Issue_Date)
 
 **Invoice_Services** (<u>*Invoice_No*</u>, <u>*Service_ID*</u>, Quantity, Unit_Price)
 
@@ -235,7 +227,7 @@ while storing relationship-specific attributes:
 
 ### Primary Key
 
-- `Record_No`
+- `Record_No` is generated automatically by Oracle using an identity column or sequence.
 
 ### Foreign Key
 
@@ -264,7 +256,7 @@ Appointments 1 : 0..1 Medical_Records
 
 ### Primary Key
 
-- `Prescription_No`
+- `Prescription_No` is generated automatically by Oracle using an identity column or sequence.
 
 ### Foreign Key
 
@@ -380,11 +372,11 @@ Invoice_Services.Unit_Price
 
 # 13. Invoices
 
-**Invoices** (<u>Invoice_No</u>, *Appointment_ID*, Issue_Date, Payment_Status)
+**Invoices** (<u>Invoice_No</u>, *Appointment_ID*, Issue_Date)
 
 ### Primary Key
 
-- `Invoice_No`
+- `Invoice_No` is generated automatically by Oracle using an identity column or sequence.
 
 ### Foreign Key
 
@@ -394,7 +386,6 @@ Invoice_Services.Unit_Price
 
 - `Appointment_ID` is `NOT NULL` and `UNIQUE`.
 - `Issue_Date` is `NOT NULL`.
-- `Payment_Status` is `NOT NULL` and has a controlled domain.
 
 ### Cardinality Enforcement
 
@@ -404,25 +395,19 @@ The `UNIQUE` constraint on `Appointment_ID` enforces:
 Appointments 1 : 0..1 Invoices
 ```
 
-### Derived Attribute
+### Derived Values
 
-`Total_Amount` is derived and **not stored redundantly**.
+`Total_Amount` and `Payment_Status` are derived values and are not stored as base relation attributes.
 
 ```text
 Total_Amount = SUM(Quantity × Unit_Price)
 ```
 
-or equivalently:
+Unpaid         when Total_Amount > 0 and SUM(Amount_Paid) = 0
+Partially Paid when Total_Amount > 0 and 0 < SUM(Amount_Paid) < Total_Amount
+Paid           when Total_Amount = 0 or SUM(Amount_Paid) = Total_Amount
 
-```text
-Total_Amount = SUM(Line_Total)
-```
-
-where:
-
-```text
-Line_Total = Quantity × Unit_Price
-```
+These values should be exposed through a database view or query rather than stored redundantly.
 
 ### Design Principle
 
@@ -488,7 +473,7 @@ This prevents historical financial records from being affected by future price c
 
 ### Primary Key
 
-- `Payment_No`
+- `Payment_No` is generated automatically by Oracle using an identity column or sequence.
 
 ### Foreign Keys
 
@@ -565,7 +550,15 @@ The following rules are part of the database design but require enforcement thro
 
 8. The cumulative sum of `Amount_Paid` for an invoice must not exceed the derived invoice total.
 
-9. `Payment_Date` must be greater than or equal to the associated invoice's `Issue_Date`.
+9. `Payment_Status` must be derived from the invoice total and the cumulative payment amount rather than stored redundantly.
+
+10. `Record_Date` must not precede the associated `Appointment_Date`.
+
+11. `Prescription_Date` must not precede the associated `Appointment_Date`.
+
+12. `Issue_Date` must not precede the associated `Appointment_Date`.
+
+13. `Payment_Date` must be greater than or equal to the associated invoice's `Issue_Date`.
 
 ---
 
@@ -578,11 +571,10 @@ The following attributes should use controlled domains implemented through appro
 | `Patients.Gender` | Controlled values defined by system requirements |
 | `Patients.Status` | Active, Inactive |
 | `Employees.Status` | Active, Inactive |
-| `Appointments.Appointment_Type` | Scheduled, Walk-in, Follow-up |
+| `Appointments.Appointment_Type` | Scheduled, Walk-in |
 | `Appointments.Status` | Scheduled, Completed, Cancelled, No-show |
 | `Medicines.Status` | Active, Inactive |
 | `Services.Status` | Active, Inactive |
-| `Invoices.Payment_Status` | Unpaid, Partially Paid, Paid |
 | `Payments.Payment_Method` | Controlled payment methods supported by the clinic |
 
 ---
@@ -593,3 +585,4 @@ The following attributes should use controlled domains implemented through appro
 |---|---|---|
 | `Invoice_Services.Line_Total` | `Quantity × Unit_Price` | Not stored |
 | `Invoices.Total_Amount` | `SUM(Quantity × Unit_Price)` | Not stored |
+| `Invoices.Payment_Status` | Derived from `Total_Amount` and `SUM(Amount_Paid)` | Not stored |
