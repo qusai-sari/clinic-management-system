@@ -123,13 +123,13 @@ Prescription_No → Appointment_ID, Prescription_Date, General_Instructions
 ```
 
 ```text
-Invoice_No → Appointment_ID, Issue_Date, Payment_Status
+Invoice_No → Appointment_ID, Issue_Date
 ```
 
 Because `Appointment_ID` is both `UNIQUE` and `NOT NULL` in `Invoices`:
 
 ```text
-Appointment_ID → Invoice_No, Issue_Date, Payment_Status
+Appointment_ID → Invoice_No, Issue_Date
 ```
 
 ```text
@@ -189,6 +189,8 @@ Patient_ID → First_Name, Middle_Name, Last_Name, Date_of_Birth, Gender, Phone,
 ```
 
 Unique attributes such as `Role_Name`, `Phone`, `License_Number`, and `Service_Name` function as alternate candidate keys only when declared `UNIQUE NOT NULL`. Therefore, these dependencies do not constitute transitive dependencies.
+
+Derived values such as `Line_Total`, `Total_Amount`, and `Payment_Status` are not stored as base relation attributes. Therefore, they do not introduce redundancy or update anomalies.
 
 The schema satisfies 3NF, and no further decomposition is required based on the stated dependencies.
 
