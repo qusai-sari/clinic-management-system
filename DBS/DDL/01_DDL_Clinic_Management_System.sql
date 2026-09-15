@@ -58,6 +58,8 @@ CREATE SEQUENCE seq_appointment_id
 CREATE SEQUENCE seq_record_no
     START WITH 1
     INCREMENT BY 1
+    NOCACHE
+    NOCYCLE;
 
 -- Sequence for Prescription_No
 CREATE SEQUENCE seq_prescription_no
