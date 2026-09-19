@@ -6,21 +6,34 @@
 -- Management System based on the System Analysis, ERD, Schema, and Normalization.
 -- ============================================================================
 
--- Drop existing tables in correct order (reverse of creation)
-DROP TABLE Payments CASCADE CONSTRAINTS;
-DROP TABLE Invoice_Services CASCADE CONSTRAINTS;
-DROP TABLE Invoices CASCADE CONSTRAINTS;
-DROP TABLE Prescription_Medicines CASCADE CONSTRAINTS;
-DROP TABLE Prescriptions CASCADE CONSTRAINTS;
-DROP TABLE Medicines CASCADE CONSTRAINTS;
-DROP TABLE Medical_Records CASCADE CONSTRAINTS;
-DROP TABLE Appointments CASCADE CONSTRAINTS;
-DROP TABLE Services CASCADE CONSTRAINTS;
-DROP TABLE General_Employees CASCADE CONSTRAINTS;
-DROP TABLE Doctors CASCADE CONSTRAINTS;
-DROP TABLE Employees CASCADE CONSTRAINTS;
-DROP TABLE Roles CASCADE CONSTRAINTS;
-DROP TABLE Patients CASCADE CONSTRAINTS;
+-- Drop existing objects safely so the script can be re-run.
+BEGIN
+    FOR r IN (
+        SELECT table_name FROM user_tables
+        WHERE table_name IN (
+            'PAYMENTS','INVOICE_SERVICES','INVOICES','PRESCRIPTION_MEDICINES',
+            'PRESCRIPTIONS','MEDICINES','MEDICAL_RECORDS','APPOINTMENTS',
+            'SERVICES','GENERAL_EMPLOYEES','DOCTORS','EMPLOYEES','ROLES','PATIENTS'
+        )
+    ) LOOP
+        EXECUTE IMMEDIATE 'DROP TABLE ' || r.table_name || ' CASCADE CONSTRAINTS PURGE';
+    END LOOP;
+END;
+/
+
+BEGIN
+    FOR r IN (
+        SELECT sequence_name FROM user_sequences
+        WHERE sequence_name IN (
+            'SEQ_PATIENT_ID','SEQ_ROLE_ID','SEQ_EMPLOYEE_ID','SEQ_APPOINTMENT_ID',
+            'SEQ_RECORD_NO','SEQ_PRESCRIPTION_NO','SEQ_MEDICINE_ID','SEQ_SERVICE_ID',
+            'SEQ_INVOICE_NO','SEQ_PAYMENT_NO'
+        )
+    ) LOOP
+        EXECUTE IMMEDIATE 'DROP SEQUENCE ' || r.sequence_name;
+    END LOOP;
+END;
+/
 
 -- ============================================================================
 -- SEQUENCES
@@ -145,8 +158,7 @@ CREATE TABLE Employees (
     Hire_Date DATE NOT NULL,
     Status VARCHAR2(20) NOT NULL,
     CONSTRAINT chk_employee_salary CHECK (Salary > 0),
-    CONSTRAINT chk_employee_status CHECK (Status IN ('Active', 'Inactive')),
-    CONSTRAINT chk_employee_hire_date CHECK (Hire_Date <= SYSDATE)
+    CONSTRAINT chk_employee_status CHECK (Status IN ('Active', 'Inactive'))
 );
 
 -- ----------------------------------------------------------------------------
@@ -309,45 +321,84 @@ CREATE TABLE Payments (
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
--- Trigger 1: Employee Specialization - Total and Disjoint
--- Ensures every employee belongs to exactly one subtype (Doctors or General_Employees)
--- and cannot belong to both simultaneously.
+-- Employee specialization rule
 -- ----------------------------------------------------------------------------
-CREATE OR REPLACE TRIGGER trg_employee_specialization
-BEFORE INSERT OR UPDATE ON Employees
+-- The Employees table is a supertype and Doctors/General_Employees are its
+-- subtypes. Enforcing total + disjoint specialization with a row-level trigger
+-- on Employees is not valid because the child rows do not exist yet and querying
+-- child tables from such a trigger can cause inconsistent enforcement.
+-- Use sp_Add_Employee (below) for employee creation so the subtype is assigned
+-- in the same transaction.
+
+-- ----------------------------------------------------------------------------
+-- Triggers: Enforce disjoint employee subtypes
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE TRIGGER trg_doctor_disjoint_subtype
+BEFORE INSERT OR UPDATE ON Doctors
 FOR EACH ROW
 DECLARE
-    v_doctor_count NUMBER;
-    v_general_count NUMBER;
+    v_count NUMBER;
 BEGIN
-    -- Check if employee exists in Doctors
-    SELECT COUNT(*) INTO v_doctor_count
-    FROM Doctors
-    WHERE Employee_ID = :NEW.Employee_ID;
-
-    -- Check if employee exists in General_Employees
-    SELECT COUNT(*) INTO v_general_count
+    SELECT COUNT(*)
+    INTO v_count
     FROM General_Employees
     WHERE Employee_ID = :NEW.Employee_ID;
 
-    -- For INSERT: Ensure at least one subtype will be assigned
-    IF INSERTING THEN
-        IF v_doctor_count = 0 AND v_general_count = 0 THEN
-            RAISE_APPLICATION_ERROR(-20001,
-                'Every employee must belong to exactly one subtype (Doctors or General_Employees)');
-        END IF;
+    IF v_count > 0 THEN
+        RAISE_APPLICATION_ERROR(-20015,
+            'An employee cannot belong to both Doctors and General_Employees');
     END IF;
+END;
+/
 
-    -- For UPDATE: Ensure employee is not in both subtypes
-    IF v_doctor_count > 0 AND v_general_count > 0 THEN
-        RAISE_APPLICATION_ERROR(-20002,
-            'An employee cannot belong to both Doctors and General_Employees simultaneously');
+CREATE OR REPLACE TRIGGER trg_general_employee_disjoint_subtype
+BEFORE INSERT OR UPDATE ON General_Employees
+FOR EACH ROW
+DECLARE
+    v_count NUMBER;
+BEGIN
+    SELECT COUNT(*)
+    INTO v_count
+    FROM Doctors
+    WHERE Employee_ID = :NEW.Employee_ID;
+
+    IF v_count > 0 THEN
+        RAISE_APPLICATION_ERROR(-20016,
+            'An employee cannot belong to both Doctors and General_Employees');
     END IF;
 END;
 /
 
 -- ----------------------------------------------------------------------------
--- Trigger 2: Prevent Medical Record for Cancelled/No-show Appointments
+-- Trigger 1: Validate patient date of birth
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE TRIGGER trg_patient_dob
+BEFORE INSERT OR UPDATE OF Date_of_Birth ON Patients
+FOR EACH ROW
+BEGIN
+    IF :NEW.Date_of_Birth > SYSDATE THEN
+        RAISE_APPLICATION_ERROR(-20000,
+            'Date_of_Birth cannot be in the future');
+    END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- Trigger 2: Validate employee hire date
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE TRIGGER trg_employee_hire_date
+BEFORE INSERT OR UPDATE OF Hire_Date ON Employees
+FOR EACH ROW
+BEGIN
+    IF :NEW.Hire_Date > SYSDATE THEN
+        RAISE_APPLICATION_ERROR(-20014,
+            'Hire_Date cannot be in the future');
+    END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- Trigger 3: Prevent Medical Record for Cancelled/No-show Appointments
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE TRIGGER trg_medical_record_appointment_status
 BEFORE INSERT OR UPDATE ON Medical_Records
@@ -363,11 +414,15 @@ BEGIN
         RAISE_APPLICATION_ERROR(-20003,
             'Cannot create medical record for cancelled or no-show appointments');
     END IF;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        RAISE_APPLICATION_ERROR(-20018,
+            'Referenced appointment does not exist');
 END;
 /
 
 -- ----------------------------------------------------------------------------
--- Trigger 3: Ensure Record_Date >= Appointment_Date
+-- Trigger 4: Ensure Record_Date >= Appointment_Date
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE TRIGGER trg_medical_record_date
 BEFORE INSERT OR UPDATE ON Medical_Records
@@ -383,11 +438,15 @@ BEGIN
         RAISE_APPLICATION_ERROR(-20004,
             'Record_Date must be greater than or equal to Appointment_Date');
     END IF;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        RAISE_APPLICATION_ERROR(-20018,
+            'Referenced appointment does not exist');
 END;
 /
 
 -- ----------------------------------------------------------------------------
--- Trigger 4: Prevent Prescription for Cancelled/No-show Appointments
+-- Trigger 5: Prevent Prescription for Cancelled/No-show Appointments
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE TRIGGER trg_prescription_appointment_status
 BEFORE INSERT OR UPDATE ON Prescriptions
@@ -403,11 +462,15 @@ BEGIN
         RAISE_APPLICATION_ERROR(-20005,
             'Cannot create prescription for cancelled or no-show appointments');
     END IF;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        RAISE_APPLICATION_ERROR(-20018,
+            'Referenced appointment does not exist');
 END;
 /
 
 -- ----------------------------------------------------------------------------
--- Trigger 5: Ensure Prescription_Date >= Appointment_Date
+-- Trigger 6: Ensure Prescription_Date >= Appointment_Date
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE TRIGGER trg_prescription_date
 BEFORE INSERT OR UPDATE ON Prescriptions
@@ -423,11 +486,15 @@ BEGIN
         RAISE_APPLICATION_ERROR(-20006,
             'Prescription_Date must be greater than or equal to Appointment_Date');
     END IF;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        RAISE_APPLICATION_ERROR(-20018,
+            'Referenced appointment does not exist');
 END;
 /
 
 -- ----------------------------------------------------------------------------
--- Trigger 6: Ensure Prescription has at least one medicine
+-- Trigger 7: Ensure Prescription has at least one medicine
 -- (This is checked before allowing prescription to be finalized)
 -- Note: This is a validation trigger that should be checked at application level
 -- or through a stored procedure. For now, we'll create a check constraint
@@ -435,7 +502,33 @@ END;
 -- ----------------------------------------------------------------------------
 
 -- ----------------------------------------------------------------------------
--- Trigger 7: Prevent Invoice for Cancelled Appointments
+-- Trigger 8: Ensure Prescription has at least one medicine
+-- This trigger prevents a prescription from being created or updated without
+-- at least one associated medicine in Prescription_Medicines
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE TRIGGER trg_prescription_medicine_count
+BEFORE INSERT OR UPDATE ON Prescriptions
+FOR EACH ROW
+DECLARE
+    v_medicine_count NUMBER;
+BEGIN
+    -- For UPDATE, check if medicines exist (can't check for INSERT as medicines not added yet)
+    IF UPDATING THEN
+        SELECT COUNT(*)
+        INTO v_medicine_count
+        FROM Prescription_Medicines
+        WHERE Prescription_No = :NEW.Prescription_No;
+
+        IF v_medicine_count = 0 THEN
+            RAISE_APPLICATION_ERROR(-20017,
+                'A prescription must have at least one associated medicine');
+        END IF;
+    END IF;
+END;
+/
+
+-- ----------------------------------------------------------------------------
+-- Trigger 9: Prevent Invoice for Cancelled Appointments
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE TRIGGER trg_invoice_appointment_status
 BEFORE INSERT OR UPDATE ON Invoices
@@ -451,11 +544,15 @@ BEGIN
         RAISE_APPLICATION_ERROR(-20007,
             'Cannot create invoice for cancelled appointments');
     END IF;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        RAISE_APPLICATION_ERROR(-20018,
+            'Referenced appointment does not exist');
 END;
 /
 
 -- ----------------------------------------------------------------------------
--- Trigger 8: Ensure Issue_Date >= Appointment_Date
+-- Trigger 10: Ensure Issue_Date >= Appointment_Date
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE TRIGGER trg_invoice_date
 BEFORE INSERT OR UPDATE ON Invoices
@@ -471,11 +568,15 @@ BEGIN
         RAISE_APPLICATION_ERROR(-20008,
             'Issue_Date must be greater than or equal to Appointment_Date');
     END IF;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        RAISE_APPLICATION_ERROR(-20018,
+            'Referenced appointment does not exist');
 END;
 /
 
 -- ----------------------------------------------------------------------------
--- Trigger 9: Prevent adding inactive medicines to prescriptions
+-- Trigger 11: Prevent adding inactive medicines to prescriptions
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE TRIGGER trg_prescription_medicine_status
 BEFORE INSERT OR UPDATE ON Prescription_Medicines
@@ -491,11 +592,15 @@ BEGIN
         RAISE_APPLICATION_ERROR(-20009,
             'Cannot add inactive medicines to prescriptions');
     END IF;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        RAISE_APPLICATION_ERROR(-20019,
+            'Referenced medicine does not exist');
 END;
 /
 
 -- ----------------------------------------------------------------------------
--- Trigger 10: Prevent adding inactive services to invoices
+-- Trigger 12: Prevent adding inactive services to invoices
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE TRIGGER trg_invoice_service_status
 BEFORE INSERT OR UPDATE ON Invoice_Services
@@ -511,11 +616,15 @@ BEGIN
         RAISE_APPLICATION_ERROR(-20010,
             'Cannot add inactive services to invoices');
     END IF;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        RAISE_APPLICATION_ERROR(-20020,
+            'Referenced service does not exist');
 END;
 /
 
 -- ----------------------------------------------------------------------------
--- Trigger 11: Ensure Payment_Date >= Invoice Issue_Date
+-- Trigger 13: Ensure Payment_Date >= Invoice Issue_Date
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE TRIGGER trg_payment_date
 BEFORE INSERT OR UPDATE ON Payments
@@ -531,54 +640,74 @@ BEGIN
         RAISE_APPLICATION_ERROR(-20011,
             'Payment_Date must be greater than or equal to Invoice Issue_Date');
     END IF;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        RAISE_APPLICATION_ERROR(-20021,
+            'Referenced invoice does not exist');
 END;
 /
 
 -- ----------------------------------------------------------------------------
--- Trigger 12: Prevent overpayment (cumulative payments cannot exceed invoice total)
+-- Trigger 14: Prevent overpayment (cumulative payments cannot exceed invoice total)
+-- A compound trigger is used because querying Payments from a row-level trigger
+-- on Payments causes ORA-04091 (mutating table).
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE TRIGGER trg_payment_overpayment
-BEFORE INSERT OR UPDATE ON Payments
-FOR EACH ROW
-DECLARE
-    v_invoice_total NUMBER(10,2);
-    v_current_payments NUMBER(10,2);
-    v_new_total NUMBER(10,2);
-BEGIN
-    -- Calculate invoice total
-    SELECT SUM(Quantity * Unit_Price) INTO v_invoice_total
-    FROM Invoice_Services
-    WHERE Invoice_No = :NEW.Invoice_No;
+FOR INSERT OR UPDATE ON Payments
+COMPOUND TRIGGER
+    TYPE t_payment_record IS RECORD (
+        Invoice_No Payments.Invoice_No%TYPE,
+        Amount_Paid Payments.Amount_Paid%TYPE
+    );
+    TYPE t_payment_array IS TABLE OF t_payment_record INDEX BY PLS_INTEGER;
+    g_payments t_payment_array;
+    g_count PLS_INTEGER := 0;
 
-    -- If no services, total is 0
-    IF v_invoice_total IS NULL THEN
-        v_invoice_total := 0;
-    END IF;
+    BEFORE STATEMENT IS
+    BEGIN
+        g_count := 0;
+    END BEFORE STATEMENT;
 
-    -- Calculate current payments (excluding the one being inserted/updated)
-    SELECT SUM(Amount_Paid) INTO v_current_payments
-    FROM Payments
-    WHERE Invoice_No = :NEW.Invoice_No
-    AND Payment_No != NVL(:NEW.Payment_No, 0);
+    AFTER EACH ROW IS
+    BEGIN
+        g_count := g_count + 1;
+        g_payments(g_count).Invoice_No := :NEW.Invoice_No;
+        g_payments(g_count).Amount_Paid := :NEW.Amount_Paid;
+    END AFTER EACH ROW;
 
-    IF v_current_payments IS NULL THEN
-        v_current_payments := 0;
-    END IF;
+    AFTER STATEMENT IS
+        v_invoice_total NUMBER(10,2);
+        v_current_payments NUMBER(10,2);
+        v_invoice_no Payments.Invoice_No%TYPE;
+    BEGIN
+        FOR i IN 1 .. g_count LOOP
+            v_invoice_no := g_payments(i).Invoice_No;
 
-    -- Calculate new total after this payment
-    v_new_total := v_current_payments + :NEW.Amount_Paid;
+            -- Calculate invoice total from Invoice_Services
+            SELECT NVL(SUM(Quantity * Unit_Price), 0)
+            INTO v_invoice_total
+            FROM Invoice_Services
+            WHERE Invoice_No = v_invoice_no;
 
-    IF v_new_total > v_invoice_total THEN
-        RAISE_APPLICATION_ERROR(-20012,
-            'Total payments cannot exceed invoice total. Invoice total: ' ||
-            v_invoice_total || ', Current payments: ' || v_current_payments ||
-            ', This payment: ' || :NEW.Amount_Paid);
-    END IF;
+            -- Calculate total payments including the new one
+            SELECT NVL(SUM(Amount_Paid), 0)
+            INTO v_current_payments
+            FROM Payments
+            WHERE Invoice_No = v_invoice_no;
+
+            -- Check if total payments exceed invoice total
+            IF v_current_payments > v_invoice_total AND v_invoice_total > 0 THEN
+                RAISE_APPLICATION_ERROR(-20012,
+                    'Total payments cannot exceed invoice total. Invoice total: ' ||
+                    v_invoice_total || ', Total payments: ' || v_current_payments);
+            END IF;
+        END LOOP;
+    END AFTER STATEMENT;
 END;
 /
 
 -- ----------------------------------------------------------------------------
--- Trigger 13: Ensure appointments are only assigned to active doctors
+-- Trigger 15: Ensure appointments are only assigned to active doctors
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE TRIGGER trg_appointment_active_doctor
 BEFORE INSERT OR UPDATE ON Appointments
@@ -595,6 +724,10 @@ BEGIN
         RAISE_APPLICATION_ERROR(-20013,
             'Cannot assign appointment to inactive doctor');
     END IF;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        RAISE_APPLICATION_ERROR(-20022,
+            'Referenced doctor does not exist or is not a valid doctor');
 END;
 /
 
@@ -610,17 +743,17 @@ SELECT
     i.Invoice_No,
     i.Appointment_ID,
     i.Issue_Date,
-    SUM(is.Quantity * is.Unit_Price) AS Total_Amount,
+    SUM(inv_svc.Quantity * inv_svc.Unit_Price) AS Total_Amount,
     (SELECT SUM(Amount_Paid) FROM Payments p WHERE p.Invoice_No = i.Invoice_No) AS Total_Paid,
     CASE
-        WHEN SUM(is.Quantity * is.Unit_Price) = 0 THEN 'Paid'
+        WHEN SUM(inv_svc.Quantity * inv_svc.Unit_Price) = 0 THEN 'Paid'
         WHEN (SELECT SUM(Amount_Paid) FROM Payments p WHERE p.Invoice_No = i.Invoice_No) IS NULL THEN 'Unpaid'
         WHEN (SELECT SUM(Amount_Paid) FROM Payments p WHERE p.Invoice_No = i.Invoice_No) = 0 THEN 'Unpaid'
-        WHEN (SELECT SUM(Amount_Paid) FROM Payments p WHERE p.Invoice_No = i.Invoice_No) < SUM(is.Quantity * is.Unit_Price) THEN 'Partially Paid'
-        WHEN (SELECT SUM(Amount_Paid) FROM Payments p WHERE p.Invoice_No = i.Invoice_No) >= SUM(is.Quantity * is.Unit_Price) THEN 'Paid'
+        WHEN (SELECT SUM(Amount_Paid) FROM Payments p WHERE p.Invoice_No = i.Invoice_No) < SUM(inv_svc.Quantity * inv_svc.Unit_Price) THEN 'Partially Paid'
+        WHEN (SELECT SUM(Amount_Paid) FROM Payments p WHERE p.Invoice_No = i.Invoice_No) >= SUM(inv_svc.Quantity * inv_svc.Unit_Price) THEN 'Paid'
     END AS Payment_Status
 FROM Invoices i
-LEFT JOIN Invoice_Services is ON i.Invoice_No = is.Invoice_No
+LEFT JOIN Invoice_Services inv_svc ON i.Invoice_No = inv_svc.Invoice_No
 GROUP BY i.Invoice_No, i.Appointment_ID, i.Issue_Date;
 
 -- ----------------------------------------------------------------------------
@@ -635,7 +768,7 @@ SELECT
     pat.Patient_ID,
     pat.First_Name || ' ' || pat.Middle_Name || ' ' || pat.Last_Name AS Patient_Name,
     doc.Employee_ID AS Doctor_ID,
-    doc.First_Name || ' ' || doc.Middle_Name || ' ' || doc.Last_Name AS Doctor_Name,
+    emp_doc.First_Name || ' ' || emp_doc.Middle_Name || ' ' || emp_doc.Last_Name AS Doctor_Name,
     pm.Medicine_ID,
     m.Medicine_Name,
     m.Dosage_Form,
