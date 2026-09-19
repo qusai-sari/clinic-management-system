@@ -51,7 +51,9 @@ SELECT
     ROUND(AVG(pay.Amount_Paid), 2) AS Average_Payment_Amount,
     ROUND(
         (SUM(pay.Amount_Paid) * 100.0) /
-        NULLIF((SELECT SUM(Amount_Paid) FROM Payments), 0), 2
+        NULLIF((SELECT SUM(Amount_Paid) FROM Payments WHERE Payment_Date BETWEEN 
+            (SELECT MIN(Payment_Date) FROM Payments) AND 
+            (SELECT MAX(Payment_Date) FROM Payments)), 0), 2
     ) AS Revenue_Percentage,
     ROUND(
         (COUNT(pay.Payment_No) * 100.0) /

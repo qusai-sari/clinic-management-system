@@ -58,7 +58,7 @@ SELECT
     a.Appointment_ID,
     a.Appointment_Date,
     a.Reason_for_Visit,
-    doc.Employee_ID AS Doctor_ID,
+    d.Employee_ID AS Doctor_ID,
     e.First_Name || ' ' || e.Middle_Name || ' ' || e.Last_Name AS Doctor_Name,
     d.Specialization,
     pm.Medicine_ID,
@@ -71,9 +71,8 @@ SELECT
 FROM Prescriptions p
 JOIN Appointments a ON p.Appointment_ID = a.Appointment_ID
 JOIN Patients pat ON a.Patient_ID = pat.Patient_ID
-JOIN Doctors doc ON a.Doctor_ID = doc.Employee_ID
-JOIN Employees e ON doc.Employee_ID = e.Employee_ID
 JOIN Doctors d ON a.Doctor_ID = d.Employee_ID
+JOIN Employees e ON d.Employee_ID = e.Employee_ID
 JOIN Prescription_Medicines pm ON p.Prescription_No = pm.Prescription_No
 JOIN Medicines m ON pm.Medicine_ID = m.Medicine_ID
 WHERE p.Prescription_Date BETWEEN TO_DATE('2024-01-01', 'YYYY-MM-DD') AND TO_DATE('2024-03-31', 'YYYY-MM-DD')
