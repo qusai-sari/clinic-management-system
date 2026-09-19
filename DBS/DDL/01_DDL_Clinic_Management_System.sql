@@ -129,8 +129,7 @@ CREATE TABLE Patients (
     Neighborhood VARCHAR2(50),
     Status VARCHAR2(20) NOT NULL,
     CONSTRAINT chk_patient_gender CHECK (Gender IN ('Male', 'Female')),
-    CONSTRAINT chk_patient_status CHECK (Status IN ('Active', 'Inactive')),
-    CONSTRAINT chk_patient_dob CHECK (Date_of_Birth <= SYSDATE)
+    CONSTRAINT chk_patient_status CHECK (Status IN ('Active', 'Inactive'))
 );
 
 -- ----------------------------------------------------------------------------
